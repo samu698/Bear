@@ -134,28 +134,10 @@ namespace config {
     }
 
     std::optional<std::runtime_error> Citnames::update(const flags::Arguments& args) {
-        auto input_arg = args.as_string(cmd::citnames::FLAG_INPUT);
-        auto output_arg = args.as_string(cmd::citnames::FLAG_OUTPUT);
-        auto append_arg = args.as_bool(cmd::citnames::FLAG_APPEND);
-        auto run_checks_arg = args.as_bool(cmd::citnames::FLAG_RUN_CHECKS);
-
-        if (output_arg.is_ok()) {
-            output_file = output_arg.unwrap();
-        }
-
-        if (input_arg.is_ok()) {
-            input_file = input_arg.unwrap();
-        } else {
-            return std::runtime_error("Missing input file");
-        }
-
-        if (append_arg.is_ok()) {
-            append = append_arg.unwrap();
-        }
-
-        if (run_checks_arg.is_ok()) {
-            output.content.include_only_existing_source = run_checks_arg.unwrap();
-        }
+        args.as_string(cmd::citnames::FLAG_INPUT).unwrap_to(input_file);
+        args.as_string(cmd::citnames::FLAG_OUTPUT).unwrap_to(output_file);
+        args.as_bool(cmd::citnames::FLAG_APPEND).unwrap_to(append);
+        args.as_bool(cmd::citnames::FLAG_RUN_CHECKS).unwrap_to(output.content.include_only_existing_source);
 
         if (output.content.include_only_existing_source) {
             output.content.paths_to_exclude = sys::path::to_abspath(output.content.paths_to_exclude)

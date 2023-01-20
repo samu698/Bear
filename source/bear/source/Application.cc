@@ -21,119 +21,43 @@
 #include "citnames/citnames-forward.h"
 #include "intercept/intercept-forward.h"
 
-namespace {
+#include <optional>
 
+namespace {
     constexpr std::optional<std::string_view> ADVANCED_GROUP = {"advanced options"};
     constexpr std::optional<std::string_view> DEVELOPER_GROUP = {"developer options"};
 
-    rust::Result<sys::Process::Builder>
-    prepare_intercept(const flags::Arguments &arguments, const sys::env::Vars &environment, const fs::path &output) {
-        auto program = arguments.as_string(cmd::bear::FLAG_BEAR);
-        auto command = arguments.as_string_list(cmd::intercept::FLAG_COMMAND);
-        auto library = arguments.as_string(cmd::intercept::FLAG_LIBRARY);
-        auto wrapper = arguments.as_string(cmd::intercept::FLAG_WRAPPER);
-        auto wrapper_dir = arguments.as_string(cmd::intercept::FLAG_WRAPPER_DIR);
-        auto verbose = arguments.as_bool(flags::VERBOSE).unwrap_or(false);
-        auto force_wrapper = arguments.as_bool(cmd::intercept::FLAG_FORCE_WRAPPER).unwrap_or(false);
-        auto force_preload = arguments.as_bool(cmd::intercept::FLAG_FORCE_PRELOAD).unwrap_or(false);
-
-        return rust::merge(program, command, rust::merge(library, wrapper, wrapper_dir))
-                .map<sys::Process::Builder>(
-                        [&environment, &output, &verbose, &force_wrapper, &force_preload](auto tuple) {
-                            const auto&[program, command, pack] = tuple;
-                            const auto&[library, wrapper, wrapper_dir] = pack;
-
-                            auto builder = sys::Process::Builder(program)
-                                    .set_environment(environment)
-                                    .add_argument(program)
-                                    .add_argument("intercept")
-                                    .add_argument(cmd::intercept::FLAG_LIBRARY).add_argument(library)
-                                    .add_argument(cmd::intercept::FLAG_WRAPPER).add_argument(wrapper)
-                                    .add_argument(cmd::intercept::FLAG_WRAPPER_DIR).add_argument(wrapper_dir)
-                                    .add_argument(cmd::intercept::FLAG_OUTPUT).add_argument(output);
-                            if (force_wrapper) {
-                                builder.add_argument(cmd::intercept::FLAG_FORCE_WRAPPER);
-                            }
-                            if (force_preload) {
-                                builder.add_argument(cmd::intercept::FLAG_FORCE_PRELOAD);
-                            }
-                            if (verbose) {
-                                builder.add_argument(flags::VERBOSE);
-                            }
-                            builder.add_argument(cmd::intercept::FLAG_COMMAND)
-                                    .add_arguments(command.begin(), command.end());
-                            return builder;
-                        });
-    }
-
-    rust::Result<sys::Process::Builder>
-    prepare_citnames(const flags::Arguments &arguments, const sys::env::Vars &environment, const fs::path &input) {
-        auto program = arguments.as_string(cmd::bear::FLAG_BEAR);
-        auto output = arguments.as_string(cmd::citnames::FLAG_OUTPUT);
-        auto config = arguments.as_string(cmd::citnames::FLAG_CONFIG);
-        auto append = arguments.as_bool(cmd::citnames::FLAG_APPEND).unwrap_or(false);
-        auto verbose = arguments.as_bool(flags::VERBOSE).unwrap_or(false);
-
-        return rust::merge(program, output)
-                .map<sys::Process::Builder>([&environment, &input, &config, &append, &verbose](auto tuple) {
-                    const auto&[program, output] = tuple;
-
-                    auto builder = sys::Process::Builder(program)
-                            .set_environment(environment)
-                            .add_argument(program)
-                            .add_argument("citnames")
-                            .add_argument(cmd::citnames::FLAG_INPUT).add_argument(input)
-                            .add_argument(cmd::citnames::FLAG_OUTPUT).add_argument(output)
-                            // can run the file checks, because we are on the host.
-                            .add_argument(cmd::citnames::FLAG_RUN_CHECKS);
-                    if (append) {
-                        builder.add_argument(cmd::citnames::FLAG_APPEND);
-                    }
-                    if (config.is_ok()) {
-                        builder.add_argument(cmd::citnames::FLAG_CONFIG).add_argument(config.unwrap());
-                    }
-                    if (verbose) {
-                        builder.add_argument(flags::VERBOSE);
-                    }
-                    return builder;
-                });
-    }
-
-    rust::Result<int> execute(sys::Process::Builder builder, const std::string_view &name) {
-        return builder.spawn()
-                .and_then<sys::ExitStatus>([](auto child) {
-                    sys::SignalForwarder guard(child);
-                    return child.wait();
-                })
-                .map<int>([](auto status) {
-                    return status.code().value_or(EXIT_FAILURE);
-                })
-                .map_err<std::runtime_error>([&name](auto error) {
-                    spdlog::warn("Running {} failed: {}", name, error.what());
-                    return error;
-                })
-                .on_success([&name](auto status) {
-                    spdlog::debug("Running {} finished. [Exited with {}]", name, status);
-                });
-    }
 }
 
 namespace bear {
 
-    Command::Command(const sys::Process::Builder& intercept, const sys::Process::Builder& citnames, fs::path output) noexcept
+    Command::Command(rust::Result<ps::CommandPtr>&& intercept, rust::Result<ps::CommandPtr>&& citnames, fs::path output) noexcept
             : ps::Command()
-            , intercept_(intercept)
-            , citnames_(citnames)
+            , intercept_(std::move(intercept))
+            , citnames_(std::move(citnames))
             , output_(std::move(output))
     { }
 
     [[nodiscard]] rust::Result<int> Command::execute() const
     {
-        auto result = ::execute(intercept_, "intercept");
+        if (intercept_.is_err()) {
+            return rust::Err(intercept_.unwrap_err());
+        }
+        if (citnames_.is_err()) {
+            return rust::Err(citnames_.unwrap_err());
+        }
 
         std::error_code error_code;
+
+        auto result = intercept_
+                .and_then<int>([](const auto &cmd){
+                    return cmd->execute();
+                });
         if (fs::exists(output_, error_code)) {
-            ::execute(citnames_, "citnames");
+            citnames_
+                    .on_success([](const auto &cmd) {
+                        return cmd->execute();
+                    });
             fs::remove(output_, error_code);
         }
         return result;
@@ -183,33 +107,34 @@ namespace bear {
         auto configuration = config::Configuration::load_config(args);
 
         return configuration
-                .and_then<ps::CommandPtr>([this, &args](const auto& configuration) -> rust::Result<ps::CommandPtr> {
-                    if (auto citnames = cs::Citnames(configuration.citnames, log_config_); citnames.matches(args)) {
+                .and_then<ps::CommandPtr>([this, &args](const config::Configuration& configuration) -> rust::Result<ps::CommandPtr> {
+                    auto citnames = cs::Citnames(configuration.citnames, log_config_);
+                    auto intercept = ic::Intercept(configuration.intercept, log_config_);
+
+                    if (citnames.matches(args)) {
                         return citnames.subcommand(args);
                     }
-                    if (auto intercept = ic::Intercept(configuration.intercept, log_config_); intercept.matches(args)) {
+                    if (intercept.matches(args)) {
                         return intercept.subcommand(args);
                     }
                     if (args.as_string(flags::COMMAND).is_ok()) {
                         return rust::Err(std::runtime_error("Invalid subcommand"));
                     }
+                    
+                    auto config = configuration;
+                    config.citnames.output_file = args.as_string(cmd::citnames::FLAG_OUTPUT)
+                            .unwrap_or(cmd::citnames::DEFAULT_OUTPUT);
+                    config.citnames.input_file = config.citnames.output_file.replace_extension(".events.json");
+                    config.intercept.output_file = config.citnames.input_file;
 
-                    auto commands = args.as_string(cmd::citnames::FLAG_OUTPUT)
-                            .map<fs::path>([](const auto &output) {
-                                return fs::path(output).replace_extension(".events.json");
-                            })
-                            .unwrap_or(fs::path(cmd::citnames::DEFAULT_OUTPUT));
+                    intercept.load_config(config.intercept);
+                    auto intercept_cmd = intercept.subcommand(args);
 
-                    auto environment = sys::env::get();
-                    auto intercept = prepare_intercept(args, environment, commands);
-                    auto citnames = prepare_citnames(args, environment, commands);
+                    citnames.load_config(config.citnames);
+                    auto citnames_cmd = citnames.subcommand(args);
 
-                    return rust::merge(intercept, citnames)
-                            .template map<ps::CommandPtr>([&commands](const auto &tuple) {
-                                const auto&[intercept, citnames] = tuple;
-
-                                return std::make_unique<Command>(intercept, citnames, commands);
-                    });
+                    auto bear_command = std::make_unique<Command>(std::move(intercept_cmd), std::move(citnames_cmd), config.intercept.output_file);
+                    return rust::Ok<ps::CommandPtr>(std::move(bear_command));
                 });
     }
 }

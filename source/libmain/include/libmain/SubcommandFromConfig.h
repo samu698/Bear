@@ -59,7 +59,6 @@ namespace ps {
             return this->command(config_);
         }
 
-
         virtual rust::Result<CommandPtr> command(const ConfigType &config) const = 0;
 
         NON_DEFAULT_CONSTRUCTABLE(SubcommandFromConfig)

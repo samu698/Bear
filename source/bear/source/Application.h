@@ -39,7 +39,7 @@ namespace bear {
 
     struct Command : ps::Command {
     public:
-        Command(const sys::Process::Builder& intercept, const sys::Process::Builder& citnames, fs::path output) noexcept;
+        Command(rust::Result<ps::CommandPtr>&& intercept, rust::Result<ps::CommandPtr>&& citnames, fs::path output) noexcept;
 
         [[nodiscard]] rust::Result<int> execute() const override;
 
@@ -47,8 +47,8 @@ namespace bear {
         NON_COPYABLE_NOR_MOVABLE(Command)
 
     private:
-        sys::Process::Builder intercept_;
-        sys::Process::Builder citnames_;
+        rust::Result<ps::CommandPtr> intercept_;
+        rust::Result<ps::CommandPtr> citnames_;
         fs::path output_;
     };
 
