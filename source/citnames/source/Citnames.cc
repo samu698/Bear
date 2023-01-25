@@ -228,7 +228,7 @@ namespace cs {
             : ps::SubcommandFromArgs("citnames", log_config)
     { }
 
-    rust::Result<ps::CommandPtr> Citnames::command(const flags::Arguments &args, const char **envp) const {
+    rust::Result<ps::CommandPtr> Citnames::command(const flags::Arguments &args) const {
         const auto& environment = sys::env::get();
 
         auto arguments = into_arguments(args);

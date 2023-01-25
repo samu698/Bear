@@ -109,9 +109,9 @@ namespace ic {
             : ps::SubcommandFromArgs("intercept", log_config)
     { }
 
-    rust::Result<ps::CommandPtr> Intercept::command(const flags::Arguments &args, const char **envp) const {
+    rust::Result<ps::CommandPtr> Intercept::command(const flags::Arguments &args) const {
         const auto execution = capture_execution(args, sys::env::get());
-        const auto session = Session::from(args, envp);
+        const auto session = Session::from(args, sys::env::get_envp());
         const auto reporter = Reporter::from(args);
 
         return rust::merge(execution, session, reporter)
