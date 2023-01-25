@@ -43,7 +43,7 @@ namespace ps {
                 if (args.as_bool(flags::VERBOSE).unwrap_or(false)) {
                     log_config_.initForVerbose();
                 }
-                log_config_.record(argv, envp);
+                log_config_.record(argv);
                 log_config_.context();
                 spdlog::debug("arguments parsed: {0}", args);
             })

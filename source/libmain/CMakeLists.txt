@@ -11,5 +11,6 @@ target_sources(main_a
 target_link_libraries(main_a PUBLIC
         result_a
         flags_a
+        sys_a
         fmt::fmt
         spdlog::spdlog)

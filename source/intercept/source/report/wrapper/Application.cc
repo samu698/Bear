@@ -181,7 +181,7 @@ namespace wr {
             if (const bool verbose = (nullptr != getenv(cmd::wrapper::KEY_VERBOSE)); verbose) {
                 log_config.initForVerbose();
             }
-            log_config.record(argv, envp);
+            log_config.record(argv);
 
             return Application::from_envs(argc, argv, envp);
         } else {
@@ -190,7 +190,7 @@ namespace wr {
                         if (args.as_bool(flags::VERBOSE).unwrap_or(false)) {
                             log_config.initForVerbose();
                         }
-                        log_config.record(argv, envp);
+                        log_config.record(argv);
                         spdlog::debug("arguments parsed: {0}", args);
                     })
                     .and_then<ps::CommandPtr>([&envp](auto args) {
